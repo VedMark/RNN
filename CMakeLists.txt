@@ -3,5 +3,6 @@ project(RNN C)
 
 set(CMAKE_C_STANDARD 11)
 
-add_executable(RNN src/main.c src/jordan-elman.c src/include/jordan-elman.h src/algebra.c src/include/algebra.h)
-target_link_libraries(RNN -lm )
+set (CMAKE_C_FLAGS "-Wall -pedantic -Werror")
+add_executable(RNN src/main.c src/jordan-elman.c src/include/jordan-elman.h)
+target_link_libraries(RNN -lm -lgsl -lgslcblas)

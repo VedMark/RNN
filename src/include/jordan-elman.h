@@ -3,13 +3,20 @@
 
 
 #include <stdbool.h>
-#include "algebra.h"
+#include <gsl/gsl_blas.h>
+
+#define MEM_ERR (1)
+#define ALG_ERR (-1)
+#define PAR_ERR (-2)
+#define SUCCESS (0)
 
 typedef struct RNN_model {
-    matrix_type W1;
-    matrix_type W2;
+    gsl_matrix *W1;
+    gsl_matrix *W2;
+    gsl_vector *y;
+    unsigned n;
     unsigned p;
-    unsigned L;
+    unsigned m;
     double E_max;
     double alpha_max;
     double epoch_max;
@@ -20,9 +27,9 @@ typedef struct RNN_model {
 } RNN_model;
 
 
-RNN_model *RNN_load(unsigned p, unsigned L, double E_max,
-                    double alpha_max, double epoch_max, bool zero_train,
-                    bool zero_pred, bool auto_pred, bool verbose);
+int RNN_load(RNN_model *model, unsigned p, unsigned L, double E_max, double alpha_max, double epoch_max,
+             bool zero_train,
+             bool zero_pred, bool auto_pred, bool verbose);
 void RNN_destroy(RNN_model *model);
 int RNN_train(RNN_model *model, float *array, int n);
 float RNN_predict(RNN_model *model, float *array, int n);
