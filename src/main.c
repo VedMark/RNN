@@ -7,6 +7,8 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    float arr[] = {.1,.2,.3,.4,.5,.6,.7,.8,.9,1.0};
+
     RNN_model *rnn_model = NULL;
     int ret_val = 0;
 
@@ -15,13 +17,27 @@ int main(int argc, char **argv) {
     ret_val = RNN_load
             (
                     rnn_model,
-                    4, 3,
+                    6, 3,
                     0.1, 0.1,
                     1000000,
                     false, false, false, false
             );
     if(MEM_ERR == ret_val) {
-        fprintf(stderr, "internal memory error\n");
+        fprintf(stderr, "internal memory error!\n");
+        exit(1);
+    }
+
+    ret_val = RNN_train(rnn_model, arr, 10);
+    if(MEM_ERR == ret_val) {
+        fprintf(stderr, "internal memory error!\n");
+        exit(1);
+    }
+    if(ALG_ERR == ret_val) {
+        fprintf(stderr, "linear algebra error!\n");
+        exit(1);
+    }
+    if(PAR_ERR == ret_val) {
+        fprintf(stderr, "parameter(s) has wrong value!\n");
         exit(1);
     }
 
