@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <time.h>
 #include <gsl/gsl_matrix.h>
+#include <gsl/gsl_vector_double.h>
 #include "include/jordan-elman.h"
 
 #define PRINT_MATRIX(M) {                               \
@@ -35,7 +36,7 @@ double model_out(const RNN_model const *model);
 
 void back_propagation(const RNN_model const *model, size_t row);
 void forward_propagation(const RNN_model const *model, gsl_vector *p, size_t row);
-void init_sample(RNN_model *model, float *array);
+void init_sample(RNN_model *model, double *array);
 void init_uniform_dist_m(gsl_matrix *matrix);
 void init_uniform_dist_v(gsl_vector *vector);
 int train_epoch(RNN_model *model, gsl_matrix *Y, gsl_vector *p, double *alpha, double *error);
@@ -56,7 +57,7 @@ double adaptive_step(RNN_model *model) {
 
     alpha = 1 / sum;
 
-    return alpha > 1 ? 1 : alpha == 0 ? .00001 : alpha;
+    return alpha > .1 ? .1 : alpha == 0 ? .00001 : alpha;
 }
 
 void normalize_m(gsl_matrix *matrix) {
@@ -245,7 +246,7 @@ void RNN_destroy(RNN_model *model) {
     gsl_matrix_free(model->W_y);
 }
 
-int RNN_train(RNN_model *model, float *array, int n) {
+int RNN_train(RNN_model *model, double *array, int n) {
     gsl_matrix *Y = NULL;
     gsl_vector *p = NULL;
 
@@ -283,7 +284,7 @@ int RNN_train(RNN_model *model, float *array, int n) {
     return SUCCESS;
 }
 
-void init_sample(RNN_model *model, float *array) {
+void init_sample(RNN_model *model, double *array) {
     for(size_t i = 0; i < model->m; ++i) {
         for(size_t j = 0; j < model->n; ++j) {
             gsl_matrix_set(model->X, i, j, array[i + j]);
@@ -371,9 +372,47 @@ void update_values(RNN_model *model, gsl_vector *p_1, size_t row, double alpha) 
     }
 }
 
-float RNN_predict(RNN_model *model, float *array, size_t n) {
+void RNN_predict(RNN_model *model, double *predictions, size_t n) {
+    gsl_vector *window = NULL;
+    double y = 0;
+    double p_i = 0;
 
-    return SUCCESS;
+    window = gsl_vector_alloc(model->n);
+
+    gsl_matrix_get_row(window, model->X, 0);
+
+    gsl_vector_set(window, 0, .4);
+    gsl_vector_set(window, 1, .5);
+    gsl_vector_set(window, 2, .6);
+    gsl_vector_set(window, 3, .7);
+    gsl_vector_set(window, 4, .8);
+
+    PRINT_MATRIX(model->W_x);
+    PRINT_VECTOR(model->x_);
+    printf("\n");
+
+    for(size_t k = 0; k < n; ++k) {
+        for(size_t i = k; i < model->m; ++i) {
+            p_i = F(S(model, 0, i));
+            gsl_vector_set(model->x_, i, p_i);
+        }
+
+        for(size_t i = 0; i < model->p; ++i) {
+            gsl_vector_set(model->y, i, model_out(model));
+        }
+
+        y = gsl_vector_get(model->y, 0);
+
+        for(size_t i = 0; i < window->size - 1; ++i) {
+            gsl_vector_set(window, i, gsl_vector_get(window, i + 1));
+        }
+
+        gsl_vector_set(window, window->size - 1, y);
+
+        predictions[k] = y;
+    }
+
+    gsl_vector_free(window);
 }
 
 void init_uniform_dist_m(gsl_matrix *matrix) {
