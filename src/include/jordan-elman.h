@@ -24,20 +24,15 @@ typedef struct RNN_model {
     unsigned p;
     unsigned m;
     double E_max;
-    double alpha_max;
-    double epoch_max;
-    char bZero_train : 1;
-    char bZero_predict : 1;
+    size_t epoch_max;
     char bAuto_predict : 1;
     char bVerbose : 1;
 } RNN_model;
 
 
-int RNN_load(RNN_model *model, unsigned n, unsigned m, double E_max, double alpha_max, double epoch_max,
-             bool zero_train,
-             bool zero_pred, bool auto_pred, bool verbose);
+int RNN_load(RNN_model *model, unsigned n, unsigned m, double E_max, size_t epoch_max, bool auto_pred, bool verbose);
 void RNN_destroy(RNN_model *model);
-int RNN_train(RNN_model *model, double *array, int n);
-void RNN_predict(RNN_model *model, double *predictions, size_t n);
+int RNN_train(RNN_model *model, gsl_vector *array, int n);
+double *RNN_predict(RNN_model *model);
 
 #endif //ICOMPRESSOR_COMPRESSOR_H

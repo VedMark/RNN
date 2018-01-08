@@ -2,7 +2,6 @@
 #include <stdlib.h>
 #include <time.h>
 #include <gsl/gsl_matrix.h>
-#include <gsl/gsl_vector_double.h>
 #include "include/jordan-elman.h"
 
 #define PRINT_MATRIX(M) {                               \
@@ -36,12 +35,11 @@ double model_out(const RNN_model const *model);
 
 void back_propagation(const RNN_model const *model, size_t row);
 void forward_propagation(const RNN_model const *model, gsl_vector *p, size_t row);
-void init_sample(RNN_model *model, double *array);
+void init_sample(RNN_model *model, gsl_vector *array);
 void init_uniform_dist_m(gsl_matrix *matrix);
 void init_uniform_dist_v(gsl_vector *vector);
 int train_epoch(RNN_model *model, gsl_matrix *Y, gsl_vector *p, double *alpha, double *error);
-bool verify_sample(RNN_model *model, int szArray);
-void update_values(RNN_model *model, gsl_vector *p_1, size_t row, double alpha);
+void update_values(RNN_model *model, size_t row, double alpha);
 
 
 double adaptive_step(RNN_model *model) {
@@ -57,7 +55,7 @@ double adaptive_step(RNN_model *model) {
 
     alpha = 1 / sum;
 
-    return alpha > .1 ? .1 : alpha == 0 ? .00001 : alpha;
+    return alpha > model->E_max ? model->E_max : alpha <= 0 ? .00001 : alpha;
 }
 
 void normalize_m(gsl_matrix *matrix) {
@@ -161,7 +159,7 @@ double S(const RNN_model const *model, size_t row, size_t i) {
     }
 
     for(size_t k = 0; k < model->p; ++k) {
-        sum += gsl_vector_get(model->y, k) * gsl_matrix_get(model->W_y, k, i);
+        sum += gsl_vector_get(model->y, k) * gsl_matrix_get(model->W_y, i, k);
     }
 
     return sum;
@@ -181,13 +179,7 @@ double model_out(const RNN_model const *model) {
     return F(sum);
 }
 
-int RNN_load(RNN_model *model,
-             unsigned n, unsigned m,
-             double E_max,
-             double alpha_max,
-             double epoch_max,
-             bool zero_train, bool zero_pred,
-             bool auto_pred, bool verbose)
+int RNN_load(RNN_model *model, unsigned n, unsigned m, double E_max, size_t epoch_max, bool auto_pred, bool verbose)
 {
     model->X = gsl_matrix_alloc(m, n);
     if(NULL == model->X) return MEM_ERR;
@@ -213,7 +205,7 @@ int RNN_load(RNN_model *model,
     model->v = gsl_vector_alloc(m);
     if(NULL == model->v) return MEM_ERR;
 
-    model->W_y = gsl_matrix_alloc(1, m);
+    model->W_y = gsl_matrix_alloc(m, 1);
     if(NULL == model->W_x) return MEM_ERR;
 
     init_uniform_dist_m(model->W_x);
@@ -224,10 +216,7 @@ int RNN_load(RNN_model *model,
     model->m = m;
     model->p = 1;
     model->E_max = E_max;
-    model->alpha_max = alpha_max;
     model->epoch_max = epoch_max;
-    model->bZero_train = zero_train;
-    model->bZero_predict = zero_pred;
     model->bAuto_predict = auto_pred;
     model->bVerbose = verbose;
 
@@ -246,7 +235,7 @@ void RNN_destroy(RNN_model *model) {
     gsl_matrix_free(model->W_y);
 }
 
-int RNN_train(RNN_model *model, double *array, int n) {
+int RNN_train(RNN_model *model, gsl_vector *array, int n) {
     gsl_matrix *Y = NULL;
     gsl_vector *p = NULL;
 
@@ -259,7 +248,6 @@ int RNN_train(RNN_model *model, double *array, int n) {
     Y = gsl_matrix_alloc(model->m, model->p);
     if(NULL == Y) return MEM_ERR;
 
-    if(!verify_sample(model, n)) return PAR_ERR;
     init_sample(model, array);
 
     printf("-- training the model\n");
@@ -276,7 +264,15 @@ int RNN_train(RNN_model *model, double *array, int n) {
         printf("epoch: %d; alpha: %.6lf; error: %.6lf\n",
                epoch++, alpha, error);
 
-    } while(error > model->E_max);
+        if(model->bVerbose) {
+            printf("\nW_1:\n");
+            PRINT_MATRIX(model->W_x);
+            printf("\nW_2\n");
+            PRINT_VECTOR(model->v);
+            printf("\n\n");
+        }
+
+    } while(error > model->E_max && epoch < model->epoch_max);
 
     gsl_vector_free(p);
     gsl_matrix_free(Y);
@@ -284,17 +280,13 @@ int RNN_train(RNN_model *model, double *array, int n) {
     return SUCCESS;
 }
 
-void init_sample(RNN_model *model, double *array) {
+void init_sample(RNN_model *model, gsl_vector *array) {
     for(size_t i = 0; i < model->m; ++i) {
         for(size_t j = 0; j < model->n; ++j) {
-            gsl_matrix_set(model->X, i, j, array[i + j]);
+            gsl_matrix_set(model->X, i, j, gsl_vector_get(array, i + j));
         }
-        gsl_vector_set(model->e, i, array[i + model->n]);
+        gsl_vector_set(model->e, i, gsl_vector_get(array, i + model->n));
     }
-}
-
-bool verify_sample(RNN_model *model, int szArray) {
-    return szArray >= model->n + model->m;
 }
 
 int train_epoch(RNN_model *model, gsl_matrix *Y, gsl_vector *p, double *alpha, double *error) {
@@ -306,7 +298,7 @@ int train_epoch(RNN_model *model, gsl_matrix *Y, gsl_vector *p, double *alpha, d
 
         *alpha = adaptive_step(model);
 
-        update_values(model, p, i, *alpha);
+        update_values(model, i, *alpha);
 
         normalize_m(model->W_x);
         normalize_v(model->v);
@@ -338,7 +330,7 @@ void back_propagation(const RNN_model const *model, size_t row) {
     gamma_hidden_layer(model);
 }
 
-void update_values(RNN_model *model, gsl_vector *p_1, size_t row, double alpha) {
+void update_values(RNN_model *model, size_t row, double alpha) {
     double y = 0;
     double p_i = 0;
     double x_j = 0;
@@ -365,43 +357,47 @@ void update_values(RNN_model *model, gsl_vector *p_1, size_t row, double alpha) 
                        gsl_vector_get(model->v, i) + p_i * gamma * alpha);
 
         for(size_t l = 0; l < model->p; ++l) {
-            gsl_matrix_set(model->W_y, l, i,
-                           gsl_matrix_get(model->W_y, l, i)
+            gsl_matrix_set(model->W_y, i, l,
+                           gsl_matrix_get(model->W_y, i, l)
                            + y * gamma_i * alpha);
         }
     }
 }
 
-void RNN_predict(RNN_model *model, double *predictions, size_t n) {
+double *RNN_predict(RNN_model *model) {
     gsl_vector *window = NULL;
+    double *predictions = NULL;
     double y = 0;
     double p_i = 0;
+    size_t n = 0;
+
+    printf("-- prediction:\n");
+
+    n = (model->bAuto_predict ? 10 : 1);
+
+    predictions = malloc(n * sizeof(double));
+    if(NULL == predictions) return NULL;
 
     window = gsl_vector_alloc(model->n);
+    if(NULL == window) return NULL;
 
     gsl_matrix_get_row(window, model->X, 0);
 
-    gsl_vector_set(window, 0, .4);
-    gsl_vector_set(window, 1, .5);
-    gsl_vector_set(window, 2, .6);
-    gsl_vector_set(window, 3, .7);
-    gsl_vector_set(window, 4, .8);
-
-    PRINT_MATRIX(model->W_x);
-    PRINT_VECTOR(model->x_);
-    printf("\n");
-
     for(size_t k = 0; k < n; ++k) {
         for(size_t i = k; i < model->m; ++i) {
-            p_i = F(S(model, 0, i));
+            p_i = 0;
+            for(size_t j = 0; j < model->n; ++j) {
+                p_i += gsl_matrix_get(model->W_x, j, i) * gsl_vector_get(window, i);
+            }
             gsl_vector_set(model->x_, i, p_i);
         }
 
         for(size_t i = 0; i < model->p; ++i) {
-            gsl_vector_set(model->y, i, model_out(model));
+            for(size_t j = 0; j < model->m; ++j) {
+                y += gsl_vector_get(model->v, j) * gsl_vector_get(window, j);
+            }
+            gsl_vector_set(model->y, i, y);
         }
-
-        y = gsl_vector_get(model->y, 0);
 
         for(size_t i = 0; i < window->size - 1; ++i) {
             gsl_vector_set(window, i, gsl_vector_get(window, i + 1));
@@ -413,6 +409,8 @@ void RNN_predict(RNN_model *model, double *predictions, size_t n) {
     }
 
     gsl_vector_free(window);
+
+    return predictions;
 }
 
 void init_uniform_dist_m(gsl_matrix *matrix) {
