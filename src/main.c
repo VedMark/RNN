@@ -4,7 +4,7 @@
 
 void print_help() {
     printf("Usage: RNN <input> <p> <L> <E_max> <steps_max> <auto_pred> <verbose>\n"
-                   "   or: iCompressor --help\n\n"
+                   "   or:  RNN --help\n\n"
                    "  input\t\ta file containing sequence\n"
                    "  p\t\tsize of window\n"
                    "  L\t\tnumber of rows in a learning sample\n"
@@ -19,7 +19,8 @@ void print_help() {
 }
 
 int main(int argc, char **argv) {
-    const char *usage = "%s: usage: %s <input> <p> <L> <E_max> <steps_max> <auto_pred> <verbose>\n";
+    const char *usage = "Usage: %s <input> <p> <L> <E_max> <steps_max> <auto_pred> <verbose>\n"
+            "  or:  %s --help";
     if(!(argc == 2 || argc == 8)){
         printf(usage, argv[0], argv[0]);
         return 1;
@@ -30,7 +31,7 @@ int main(int argc, char **argv) {
             print_help();
             return 0;
         } else {
-            printf(usage, argv[0], argv[0]);
+            fprintf(stderr, usage, argv[0], argv[0]);
             return 1;
         }
     }
@@ -38,7 +39,7 @@ int main(int argc, char **argv) {
     RNN_model *rnn_model = NULL;
     gsl_vector *input_vector = NULL;
     FILE *input_file = NULL;
-    double *predictions = NULL;
+    gsl_vector *predictions = NULL;
     int ret_val = 0;
     size_t szMatrix = 0;
     unsigned int n = 0;
@@ -55,7 +56,12 @@ int main(int argc, char **argv) {
 
     rnn_model = malloc(sizeof(RNN_model));
 
-    fscanf(input_file, "%zu\n", &szMatrix);
+    ret_val = fscanf(input_file, "%zu\n", &szMatrix);
+
+    if(EOF == ret_val) {
+        fprintf(stderr, "error reading from file\n");
+        return 1;
+    }
     input_vector = gsl_vector_alloc(szMatrix);
     gsl_vector_fscanf(input_file, input_vector);
 
@@ -66,7 +72,7 @@ int main(int argc, char **argv) {
     auto_pred = !strcmp(argv[6], "true") ? true : false;
     verbose = !strcmp(argv[7], "true") ? true : false;
 
-    if(n + m > szMatrix + 1 || E_max < 0 || E_max > 0.1 || epoch_max <= 0) {
+    if(n + m > szMatrix || E_max < 0 || E_max > 0.1 || epoch_max <= 0) {
         fprintf(stderr, "parameter(s) has wrong value!\n");
         return 1;
     }
@@ -77,7 +83,7 @@ int main(int argc, char **argv) {
         exit(1);
     }
 
-    ret_val = RNN_train(rnn_model, input_vector, 8);
+    ret_val = RNN_train(rnn_model, input_vector);
     if(MEM_ERR == ret_val) {
         fprintf(stderr, "internal memory error!\n");
         exit(1);
@@ -95,16 +101,16 @@ int main(int argc, char **argv) {
         fprintf(stderr, "internal memory error!\n");
     }
 
-    int szPrediction = rnn_model->bAuto_predict ? 10 : 1;
-
-    for(int i = 0; i < szPrediction; ++i) {
-        printf("%lf ", predictions[i]);
+    for(size_t i = 0; i < predictions->size; ++i) {
+        printf("%lf ", gsl_vector_get(predictions, i));
     }
     printf("\n");
 
     RNN_destroy(rnn_model);
     gsl_vector_free(input_vector);
+    gsl_vector_free(predictions);
     fclose(input_file);
+    free(rnn_model);
 
     return 0;
 }
