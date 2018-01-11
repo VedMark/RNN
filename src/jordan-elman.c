@@ -107,7 +107,7 @@ void delta_last_layer(const RNN_model *model, size_t row) {
         double y = gsl_vector_get(model->y, i);
         double e = gsl_vector_get(model->e, row);
         diff = e - y;
-        gsl_vector_set(model->delta_y, i, diff * F_(y));
+        gsl_vector_set(model->delta_y, i, diff);
     }
 }
 
@@ -148,11 +148,11 @@ double E(const gsl_matrix const *Y, const gsl_vector const *e) {
 }
 
 inline double F(double S) {
-    return tanh(S); //log(fabs(cosh(S)));
+    return log(fabs(cosh(S)));
 }
 
 inline double F_(double S) {
-    return 1 - pow(S, 2); //tanh(S);
+    return tanh(S);
 }
 
 double S(const RNN_model const *model, size_t row, size_t i) {
@@ -189,9 +189,10 @@ double model_out(const RNN_model const *model) {
     return F(sum);
 }
 
-int RNN_load(RNN_model *model, unsigned n, unsigned m, double E_max, size_t epoch_max, bool auto_pred, bool verbose)
+int RNN_load(RNN_model *model, unsigned n, size_t m, size_t L, double E_max, size_t epoch_max, size_t pred, bool verbose,
+             bool nullify)
 {
-    model->X = gsl_matrix_alloc(m, n);
+    model->X = gsl_matrix_alloc(L, n);
     if(NULL == model->X) return MEM_ERR;
 
     model->x_ = gsl_vector_calloc(m);
@@ -212,7 +213,7 @@ int RNN_load(RNN_model *model, unsigned n, unsigned m, double E_max, size_t epoc
     model->delta_y = gsl_vector_alloc(1);
     if(NULL == model->delta_y) return MEM_ERR;
 
-    model->e = gsl_vector_alloc(m);
+    model->e = gsl_vector_alloc(L);
     if(NULL == model->e) return MEM_ERR;
 
     model->W_x = gsl_matrix_alloc(n, m);
@@ -237,8 +238,9 @@ int RNN_load(RNN_model *model, unsigned n, unsigned m, double E_max, size_t epoc
     model->p = 1;
     model->E_max = E_max;
     model->epoch_max = epoch_max;
-    model->bAuto_predict = auto_pred;
+    model->numPredict = pred;
     model->bVerbose = verbose;
+    model->bNullify = nullify;
 
     return SUCCESS;
 }
@@ -273,7 +275,7 @@ int RNN_train(RNN_model *model, gsl_vector *array) {
     gsl_vector_memcpy(model->input, array);
 
     p = gsl_vector_alloc(model->m);
-    Y = gsl_matrix_alloc(model->m, model->p);
+    Y = gsl_matrix_alloc(model->X->size1, model->p);
     if(NULL == Y) return MEM_ERR;
 
     init_sample(model, array);
@@ -286,22 +288,21 @@ int RNN_train(RNN_model *model, gsl_vector *array) {
     normalize_v(model->W_y);
 
     do {
+        epoch++;
+
         ret_val = train_epoch(model, Y, p, &alpha, &error);
         if(MEM_ERR == ret_val) return MEM_ERR;
         if(ALG_ERR == ret_val) return ALG_ERR;
 
-        printf("epoch: %d; alpha: %.6lf; error: %.6lf\n",
-               epoch++, alpha, error);
-
-        if(model->bVerbose) {
-            printf("\nW_1:\n");
-            PRINT_MATRIX(model->W_x);
-            printf("\nW_2\n");
-            PRINT_VECTOR(model->v);
-            printf("\n\n");
+        if(model->bVerbose || 0 == epoch % 10000) {
+            printf("epoch: %d; alpha: %.6lf; error: %.6lf\n",
+                   epoch, alpha, error);
         }
-
     } while(error > model->E_max && epoch < model->epoch_max);
+
+    if(!model->bVerbose) {
+        printf("last epoch: %d; summary standart error: %.6lf\n", epoch, error);
+    }
 
     gsl_vector_free(p);
     gsl_matrix_free(Y);
@@ -310,20 +311,23 @@ int RNN_train(RNN_model *model, gsl_vector *array) {
 }
 
 void init_sample(RNN_model *model, gsl_vector *array) {
-    for(size_t i = 0; i < model->m; ++i) {
-        for(size_t j = 0; j < model->n; ++j) {
+    for(size_t i = 0; i < model->X->size1; ++i) {
+        for(size_t j = 0; j < model->X->size2; ++j) {
             gsl_matrix_set(model->X, i, j, gsl_vector_get(array, i + j));
         }
-        gsl_vector_set(model->e, i, gsl_vector_get(array, i + model->n));
+        double var = gsl_vector_get(array, i + model->X->size2);
+        gsl_vector_set(model->e, i, var);
     }
-    printf("\n");
 }
 
 int train_epoch(RNN_model *model, gsl_matrix *Y, gsl_vector *p,
                 double *alpha, double *error) {
 
-    for(size_t i = 0; i < model->m; ++i) {
+    for(size_t i = 0; i < model->X->size1; ++i) {
         forward_propagation(model, p, i);
+        gsl_vector_memcpy(model->x_c, model->x_);
+        gsl_vector_memcpy(model->y_c, model->y);
+
         back_propagation(model, i);
 
         gsl_matrix_set_row(Y, i, model->y);
@@ -338,8 +342,10 @@ int train_epoch(RNN_model *model, gsl_matrix *Y, gsl_vector *p,
         normalize_v(model->W_y);
     }
 
-    gsl_vector_set_zero(model->x_c);
-    gsl_vector_set_zero(model->y_c);
+    if(model->bNullify) {
+        gsl_vector_set_zero(model->x_c);
+        gsl_vector_set_zero(model->y_c);
+    }
 
     *error = E(Y, model->e);
 
@@ -359,9 +365,6 @@ void forward_propagation(const RNN_model const *model, gsl_vector *p, size_t row
     for(size_t i = 0; i < model->p; ++i) {
         gsl_vector_set(model->y, i, model_out(model));
     }
-
-    gsl_vector_memcpy(model->x_c, model->x_);
-    gsl_vector_memcpy(model->y_c, model->y);
 }
 
 void back_propagation(const RNN_model const *model, size_t row) {
@@ -416,13 +419,10 @@ gsl_vector *RNN_predict(RNN_model *model) {
     gsl_vector *window = NULL;
     gsl_vector *predictions = NULL;
     double y = 0;
-    size_t n = 0;
 
     printf("-- prediction:\n");
 
-    n = (model->bAuto_predict ? 10 : 1);
-
-    predictions = gsl_vector_alloc(n);
+    predictions = gsl_vector_alloc(model->numPredict);
     if(NULL == predictions) return NULL;
 
     window = gsl_vector_alloc(model->n);
@@ -434,7 +434,9 @@ gsl_vector *RNN_predict(RNN_model *model) {
                                       model->input->size - model->n + i));
     }
 
-    for(size_t k = 0; k < n; ++k) {
+    for(size_t k = 0; k < model->numPredict; ++k) {
+        gsl_matrix_set_row(model->X, 0, window);
+
         for(size_t i = k; i < model->m; ++i) {
             gsl_vector_set(model->x_, i, F(S(model, 0, i)));
         }
@@ -446,7 +448,8 @@ gsl_vector *RNN_predict(RNN_model *model) {
         y = gsl_vector_get(model->y, 0);
 
         for(size_t i = 0; i < window->size - 1; ++i) {
-            gsl_vector_set(window, i, gsl_vector_get(window, i + 1));
+            double var = gsl_vector_get(window, i + 1);
+            gsl_vector_set(window, i, var);
         }
 
         gsl_vector_set(window, window->size - 1, y);
